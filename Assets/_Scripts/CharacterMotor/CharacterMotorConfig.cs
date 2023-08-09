@@ -28,4 +28,8 @@ public class CharacterMotorConfig : ScriptableObject
     public bool IsRunToogle = true;
     public float SlopeLimit = 60f;
 
+    [Header("Falling")]
+    public float FallVelocity = 1f;
+
+
 }

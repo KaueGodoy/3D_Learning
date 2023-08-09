@@ -124,7 +124,9 @@ public class CharacterMotor : MonoBehaviour
                 movementVector = Vector3.zero;
         }
         else
-            Debug.Log("Not grounded");
+        {
+            movementVector = Vector3.down * Config.FallVelocity;
+        }
 
         LinkedRB.velocity = movementVector;
     }
