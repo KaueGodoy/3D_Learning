@@ -29,4 +29,11 @@ MonoBehaviour:
   CanRun: 1
   IsRunToogle: 1
   SlopeLimit: 60
-  FallVelocity: 10
+  Acceleration: 1
+  FallVelocity: 12
+  CanAirControl: 1
+  AirControlMaxSpeed: 10
+  CanJump: 1
+  CanDoubleJump: 1
+  JumpVelocity: 5
+  JumpTime: 0.3

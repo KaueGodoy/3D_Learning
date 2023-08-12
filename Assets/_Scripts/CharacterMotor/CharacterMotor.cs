@@ -2,6 +2,8 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.Events;
+using UnityEngine.EventSystems;
 
 [RequireComponent(typeof(Rigidbody))]
 public class CharacterMotor : MonoBehaviour
@@ -9,13 +11,32 @@ public class CharacterMotor : MonoBehaviour
     [SerializeField] protected CharacterMotorConfig Config;
     [SerializeField] Transform LinkedCamera;
 
+    public UnityEvent<bool> OnRunChanged = new UnityEvent<bool>();
+    public UnityEvent OnHitGround = new UnityEvent();
+
     protected Rigidbody LinkedRB;
 
     protected float CurrentCameraPitch = 0f;
 
+    public bool IsJumping { get; private set; } = false;
+    public float JumpCount { get; private set; } = 0f;
+    protected float JumpTimeRemaining = 0f;
+
     public bool IsRunning { get; protected set; } = false;
     public bool IsGrounded { get; protected set; }
-    public float CurrentMaxSpeed => IsRunning ? Config.RunSpeed : Config.WalkSpeed;
+    public bool SendUIInteraction { get; set; } = true;
+    public float CurrentMaxSpeed
+    {
+        get
+        {
+            if (IsGrounded)
+                return IsRunning ? Config.RunSpeed : Config.WalkSpeed;
+            return Config.CanAirControl ? Config.AirControlMaxSpeed : 0f;
+        }
+    }
+
+    [Header("Debugging")]
+    [SerializeField] Logger logger;
 
     #region Input System Handling
 
@@ -48,6 +69,26 @@ public class CharacterMotor : MonoBehaviour
     protected void OnPrimaryAction(InputValue value)
     {
         _Input_PrimaryAction = value.isPressed;
+
+
+        // need to inject pointer event
+        if (_Input_PrimaryAction && SendUIInteraction)
+        {
+            PointerEventData pointerData = new PointerEventData(EventSystem.current);
+            pointerData.position = Mouse.current.position.ReadValue();
+
+            // raycast against the UI
+            List<RaycastResult> results = new List<RaycastResult>();
+            EventSystem.current.RaycastAll(pointerData, results);
+
+            foreach (RaycastResult result in results)
+            {
+                if (result.distance < Config.MaxInteractionDistance)
+                {
+                    ExecuteEvents.Execute(result.gameObject, pointerData, ExecuteEvents.pointerClickHandler);
+                }
+            }
+        }
     }
 
     protected bool _Input_SecondaryAction;
@@ -61,6 +102,7 @@ public class CharacterMotor : MonoBehaviour
     private void Awake()
     {
         LinkedRB = GetComponent<Rigidbody>();
+        SendUIInteraction = Config.SendUIInteraction;
     }
 
     void Start()
@@ -76,8 +118,14 @@ public class CharacterMotor : MonoBehaviour
     protected void FixedUpdate()
     {
         RaycastHit groundCheckResult = UpdateIsGrounded();
+
+        bool wasRunning = IsRunning;
         UpdateRunning(groundCheckResult);
-        Debug.Log(IsRunning);
+
+        if (wasRunning != IsRunning)
+            OnRunChanged.Invoke(IsRunning);
+
+        //Debug.Log(IsRunning);
         UpdateMovement(groundCheckResult);
     }
 
@@ -88,19 +136,34 @@ public class CharacterMotor : MonoBehaviour
 
     protected RaycastHit UpdateIsGrounded()
     {
+        RaycastHit hitResult;
+
+        if (JumpTimeRemaining > 0)
+        {
+            IsGrounded = false;
+            return new RaycastHit();
+        }
+
         Vector3 startPos = LinkedRB.position + Vector3.up * Config.Height * 0.5f;
-        float groundCheckDistance = (Config.Height * 0.5f) + Config.GroundedCheckBuffer;
+        float groundCheckRadius = Config.Radius + Config.GroundedCheckRadiusBuffer;
+        float groundCheckDistance = (Config.Height * 0.5f) - Config.Radius + Config.GroundedCheckBuffer;
 
         // perform spherecast
-        RaycastHit hitResult;
-        if (Physics.SphereCast(startPos, Config.Radius + Config.GroundedCheckRadiusBuffer, Vector3.down, out hitResult,
+        if (Physics.SphereCast(startPos, groundCheckRadius, Vector3.down, out hitResult,
                               groundCheckDistance, Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
         {
+            if (!IsGrounded)
+                OnHitGround.Invoke();
+
             IsGrounded = true;
+            JumpCount = 0f;
+            JumpTimeRemaining = 0f;
             // add auto parenting (moving platform)
         }
         else
             IsGrounded = false;
+
+        logger.Log(IsGrounded, this);
 
         return hitResult;
     }
@@ -125,11 +188,58 @@ public class CharacterMotor : MonoBehaviour
         }
         else
         {
-            movementVector = Vector3.down * Config.FallVelocity;
+            movementVector += Vector3.down * Config.FallVelocity;
         }
 
-        LinkedRB.velocity = movementVector;
+        UpdateJumping(ref movementVector);
+
+        LinkedRB.velocity = Vector3.MoveTowards(LinkedRB.velocity, movementVector, Config.Acceleration);
     }
+
+    protected void UpdateJumping(ref Vector3 movementVector)
+    {
+        bool triggeredJumpThisFrame = false;
+        // input
+        if (_Input_Jump)
+        {
+            _Input_Jump = false;
+
+            // check if can jump
+            bool triggerJump = true;
+            int numJumpsPermitted = Config.CanDoubleJump ? 2 : 1;
+            if (JumpCount >= numJumpsPermitted)
+                triggerJump = false;
+            if (!IsGrounded && !IsJumping)
+                triggerJump = false;
+
+            // trigger jump
+            if (triggerJump)
+            {
+                if (JumpCount == 0)
+                    triggeredJumpThisFrame = true;
+
+                JumpTimeRemaining += Config.JumpTime;
+                IsJumping = true;
+                ++JumpCount;
+            }
+        }
+
+        // jump
+        if (IsJumping)
+        {
+            logger.Log("Jumping", this);
+            if (!triggeredJumpThisFrame)
+                JumpTimeRemaining -= Time.deltaTime;
+
+            if (JumpTimeRemaining <= 0)
+                IsJumping = false;
+            else
+            {
+                movementVector.y = Config.JumpVelocity;
+            }
+        }
+    }
+
 
     protected void UpdateRunning(RaycastHit groundCheckResult)
     {
