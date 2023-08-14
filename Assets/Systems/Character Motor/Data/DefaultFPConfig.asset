@@ -19,6 +19,15 @@ MonoBehaviour:
     m_Bits: 17
   GroundedCheckBuffer: 0.05
   GroundedCheckRadiusBuffer: 0.05
+  CeilingCheckLayerMask:
+    serializedVersion: 2
+    m_Bits: 17
+  CeilingCheckRangeBuffer: 0.1
+  CeilingCheckRadiusBuffer: 0.05
+  StepCheck_LookAheadRange: 0.1
+  StepCheck_MaxStepHeight: 0.3
+  Material_Default: {fileID: 13400000, guid: eb20b85acc1815742b70eaadc764b211, type: 2}
+  Material_Jumping: {fileID: 13400000, guid: d9abb58d6a747cd45bdf0ad2c2d1a013, type: 2}
   Camera_InvertY: 0
   Camera_HorizontalSensitivity: 10
   Camera_VerticalSensitivity: 10
@@ -37,3 +46,5 @@ MonoBehaviour:
   CanDoubleJump: 1
   JumpVelocity: 5
   JumpTime: 0.3
+  SendUIInteraction: 1
+  MaxInteractionDistance: 2

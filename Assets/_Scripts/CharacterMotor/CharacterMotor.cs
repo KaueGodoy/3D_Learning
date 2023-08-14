@@ -8,13 +8,20 @@ using UnityEngine.EventSystems;
 [RequireComponent(typeof(Rigidbody))]
 public class CharacterMotor : MonoBehaviour
 {
+    [Header("Config")]
     [SerializeField] protected CharacterMotorConfig Config;
     [SerializeField] Transform LinkedCamera;
+
+    [Header("Debugging")]
+    [SerializeField] Logger logger;
+    [SerializeField] protected bool Debug_OverrideMovement = false;
+    [SerializeField] protected Vector2 Debug_MovementInput;
 
     public UnityEvent<bool> OnRunChanged = new UnityEvent<bool>();
     public UnityEvent OnHitGround = new UnityEvent();
 
     protected Rigidbody LinkedRB;
+    protected Collider LinkedCollider;
 
     protected float CurrentCameraPitch = 0f;
 
@@ -34,9 +41,6 @@ public class CharacterMotor : MonoBehaviour
             return Config.CanAirControl ? Config.AirControlMaxSpeed : 0f;
         }
     }
-
-    [Header("Debugging")]
-    [SerializeField] Logger logger;
 
     #region Input System Handling
 
@@ -102,12 +106,15 @@ public class CharacterMotor : MonoBehaviour
     private void Awake()
     {
         LinkedRB = GetComponent<Rigidbody>();
+        LinkedCollider = GetComponent<Collider>();
         SendUIInteraction = Config.SendUIInteraction;
     }
 
     void Start()
     {
         SetCursorLock(true);
+
+        LinkedCollider.material = Config.Material_Default;
     }
 
     void Update()
@@ -120,10 +127,14 @@ public class CharacterMotor : MonoBehaviour
         RaycastHit groundCheckResult = UpdateIsGrounded();
 
         bool wasRunning = IsRunning;
+        bool wasGrounded = IsGrounded;
         UpdateRunning(groundCheckResult);
 
         if (wasRunning != IsRunning)
             OnRunChanged.Invoke(IsRunning);
+
+        if (wasGrounded != IsGrounded)
+            LinkedCollider.material = Config.Material_Default;
 
         //Debug.Log(IsRunning);
         UpdateMovement(groundCheckResult);
@@ -149,8 +160,8 @@ public class CharacterMotor : MonoBehaviour
         float groundCheckDistance = (Config.Height * 0.5f) - Config.Radius + Config.GroundedCheckBuffer;
 
         // perform spherecast
-        if (Physics.SphereCast(startPos, groundCheckRadius, Vector3.down, out hitResult,
-                              groundCheckDistance, Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
+        if (Physics.SphereCast(startPos, groundCheckRadius, Vector3.down, out hitResult, groundCheckDistance,
+                            Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
         {
             if (!IsGrounded)
                 OnHitGround.Invoke();
@@ -163,13 +174,16 @@ public class CharacterMotor : MonoBehaviour
         else
             IsGrounded = false;
 
-        logger.Log(IsGrounded, this);
+        logger.Log("Grounded: " + IsGrounded, this);
 
         return hitResult;
     }
 
     protected void UpdateMovement(RaycastHit groundCheckResult)
     {
+        if (Debug_OverrideMovement)
+            _Input_Move = Debug_MovementInput;
+
         // stop running if no input
         if (_Input_Move.magnitude < float.Epsilon)
             IsRunning = false;
@@ -193,7 +207,44 @@ public class CharacterMotor : MonoBehaviour
 
         UpdateJumping(ref movementVector);
 
+        if (IsGrounded && !IsJumping)
+            CheckForStepUp(ref movementVector);
+
         LinkedRB.velocity = Vector3.MoveTowards(LinkedRB.velocity, movementVector, Config.Acceleration);
+    }
+
+    protected void CheckForStepUp(ref Vector3 movementVector)
+    {
+        Vector3 lookAheadStartPoint = LinkedRB.position + Vector3.up * (Config.StepCheck_MaxStepHeight * 0.5f);
+        Vector3 lookAheadDirection = movementVector.normalized;
+        float lookAheadDistance = Config.Radius + Config.StepCheck_LookAheadRange;
+
+        // check if there is potential step ahead
+        if (Physics.Raycast(lookAheadStartPoint, lookAheadDirection, lookAheadDistance,
+                            Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
+        {
+            lookAheadStartPoint = LinkedRB.position + Vector3.up * Config.StepCheck_MaxStepHeight;
+
+            // check if there is clear space above the step
+            if (!Physics.Raycast(lookAheadStartPoint, lookAheadDirection, lookAheadDistance,
+                            Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
+            {
+                Vector3 candidatePoint = lookAheadStartPoint + lookAheadDirection * lookAheadDistance;
+
+                // check the surface of the step
+                RaycastHit hitResult;
+
+                if (Physics.Raycast(candidatePoint, Vector3.down, out hitResult, Config.StepCheck_MaxStepHeight * 2f,
+                                    Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
+                {
+                    // is the step shallow enough in slope
+                    if (Vector3.Angle(Vector3.up, hitResult.normal) <= Config.SlopeLimit)
+                    {
+                        LinkedRB.position = hitResult.point;
+                    }
+                }
+            }
+        }
     }
 
     protected void UpdateJumping(ref Vector3 movementVector)
@@ -218,6 +269,7 @@ public class CharacterMotor : MonoBehaviour
                 if (JumpCount == 0)
                     triggeredJumpThisFrame = true;
 
+                LinkedCollider.material = Config.Material_Jumping;
                 JumpTimeRemaining += Config.JumpTime;
                 IsJumping = true;
                 ++JumpCount;
@@ -235,7 +287,25 @@ public class CharacterMotor : MonoBehaviour
                 IsJumping = false;
             else
             {
-                movementVector.y = Config.JumpVelocity;
+                Vector3 startPos = LinkedRB.position + Vector3.up * Config.Height * 0.5f;
+                float ceilingCheckRadius = Config.Radius + Config.CeilingCheckRadiusBuffer;
+                float ceilingCheckDistance = (Config.Height * 0.5f) - Config.Radius + Config.GroundedCheckBuffer;
+
+                // perform spherecast
+                RaycastHit ceilingHitResult;
+                if (Physics.SphereCast(startPos, ceilingCheckRadius, Vector3.up, out ceilingHitResult,
+                                      ceilingCheckDistance, Config.GroundedLayerMask, QueryTriggerInteraction.Ignore))
+                {
+                    IsJumping = false;
+                    JumpTimeRemaining = 0;
+                    movementVector.y = 0f;
+                }
+                else
+                {
+                    movementVector.y = Config.JumpVelocity;
+                }
+
+
             }
         }
     }
